@@ -6,7 +6,6 @@
     <title>Gemini Real-Time Text Chat</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- PeerJS is removed as VC is no longer required -->
     <style>
         /* Custom styles for better aesthetics */
         body { font-family: 'Inter', sans-serif; }
@@ -40,7 +39,7 @@
                 </p>
             </header>
 
-            <!-- Text Chat Section (Now centered and larger) -->
+            <!-- Text Chat Section -->
             <div class="bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col">
                 <h2 class="text-xl font-semibold mb-3 text-white">Public Chat Room</h2>
                 
@@ -55,6 +54,14 @@
                     <button onclick="sendMessage()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold p-3 rounded-lg transition duration-200 shadow-md">
                         Send
                     </button>
+                </div>
+            </div>
+
+            <!-- NEW: Online Users Section -->
+            <div class="bg-gray-800 p-4 rounded-xl shadow-lg">
+                <h2 class="text-xl font-semibold mb-3 text-white">Online Users</h2>
+                <div id="online-users-list" class="max-h-32 overflow-y-auto bg-gray-900 p-3 rounded-lg border border-gray-700 space-y-2">
+                    <p class="text-gray-500">Loading active participants...</p>
                 </div>
             </div>
         </div>
@@ -80,6 +87,7 @@
         const userStatusEl = document.getElementById('user-status');
         const chatWindowEl = document.getElementById('chat-window');
         const messageInputEl = document.getElementById('message-input');
+        const onlineUsersListEl = document.getElementById('online-users-list'); // NEW
 
         // Firestore paths
         const PUBLIC_CHAT_PATH = `artifacts/${appId}/public/data/chats`;
@@ -114,7 +122,6 @@
                         }
                         isAuthReady = true;
                         
-                        // Load or create a default profile and immediately enter the app
                         await checkAndLoadProfile();
                         
                         resolve();
@@ -133,10 +140,8 @@
             const profileSnap = await getDoc(profileDocRef);
 
             if (profileSnap.exists()) {
-                // Profile exists, load it
                 userProfile = profileSnap.data();
             } else {
-                // Profile does not exist, create and save a default profile
                 const defaultProfile = {
                     name: `Guest-${userId.substring(0, 8)}`,
                     age: 'N/A',
@@ -148,19 +153,87 @@
                 userProfile = defaultProfile;
             }
             
-            // Immediately start the main app after profile is set (default or saved)
             enterMainApp();
         }
         
         function enterMainApp() {
-            // Update status display using the loaded or default profile
             userStatusEl.innerHTML = `<span class="text-white">Logged in as:</span> <span class="text-blue-300 font-bold">${userProfile.name}</span>`;
 
             // Start main app features
+            registerUserPresence(); // NEW: Register user as active
             setupProfilesCacheListener();
             setupTextChatListener();
+            setupOnlineUsersListener(); // NEW: Listen for other active users
+        }
+        
+        // --- USER PRESENCE & ONLINE LIST FUNCTIONS (NEW) ---
+
+        async function registerUserPresence() {
+            if (!db || !userId || !userProfile) return;
+            const profileDocRef = doc(db, PUBLIC_PROFILES_PATH, userId);
+            
+            // Mark user as explicitly online and update last active time
+            await setDoc(profileDocRef, { 
+                isOnline: true, 
+                lastActive: serverTimestamp() 
+            }, { merge: true });
+
+            // Cleanup function: mark user as offline when they leave the page
+            window.addEventListener('beforeunload', async () => {
+                // Use a direct update here as it's a best-effort cleanup
+                await setDoc(profileDocRef, { 
+                    isOnline: false, 
+                    lastActive: serverTimestamp() 
+                }, { merge: true });
+            });
         }
 
+        function setupOnlineUsersListener() {
+            if (!db) return;
+
+            // Listen to all profiles, ordered by the last time they were active
+            const q = query(collection(db, PUBLIC_PROFILES_PATH), orderBy('lastActive', 'desc'));
+
+            onSnapshot(q, (snapshot) => {
+                onlineUsersListEl.innerHTML = '';
+                let count = 0;
+                const thirtySecondsAgo = Date.now() - 30000; // 30 seconds threshold for active status
+
+                snapshot.forEach((doc) => {
+                    const profile = doc.data();
+                    
+                    // Check if they are currently active (either marked isOnline=true 
+                    // or if their lastActive time was less than 30 seconds ago)
+                    let isActive = false;
+                    if (profile.isOnline === true) {
+                        isActive = true;
+                    } else if (profile.lastActive && profile.lastActive.seconds * 1000 > thirtySecondsAgo) {
+                         // Fallback check if the cleanup failed but they were very recently active
+                        isActive = true;
+                    }
+
+                    if (isActive) {
+                        count++;
+                        const isYou = profile.userId === userId;
+                        const item = document.createElement('div');
+                        item.className = `p-2 rounded-lg text-sm flex items-center justify-between ${isYou ? 'bg-blue-900/50 border border-blue-600' : 'bg-gray-700'}`;
+                        
+                        item.innerHTML = `
+                            <span class="font-bold ${isYou ? 'text-blue-200' : 'text-yellow-300'}">${profile.name}</span>
+                            <span class="text-[10px] px-2 py-0.5 rounded-full ${isYou ? 'bg-blue-600' : 'bg-green-600'} text-white">${isYou ? 'You' : 'Online'}</span>
+                        `;
+                        onlineUsersListEl.appendChild(item);
+                    }
+                });
+
+                if (count === 0) {
+                    onlineUsersListEl.innerHTML = '<p class="text-gray-500">You are the only one here.</p>';
+                }
+            }, (error) => {
+                console.error("Error listening to online users:", error);
+            });
+        }
+        
         // --- GLOBAL PROFILES CACHE (For displaying other users' details) ---
 
         function setupProfilesCacheListener() {
@@ -185,32 +258,19 @@
         function setupTextChatListener() {
             if (!db) return;
 
-            // Query messages ordered by timestamp
             const q = query(collection(db, PUBLIC_CHAT_PATH), orderBy('timestamp', 'asc'));
 
             onSnapshot(q, (snapshot) => {
-                // Remove the "no messages" placeholder if messages exist
-                if (chatWindowEl.firstElementChild && chatWindowEl.firstElementChild.classList.contains('text-gray-500')) {
-                    chatWindowEl.innerHTML = '';
-                }
-
-                // Append new messages
-                let newMessagesHtml = '';
-                snapshot.docChanges().forEach((change) => {
-                    if (change.type === "added") {
-                        const message = change.doc.data();
-                        newMessagesHtml += createMessageHtml(message);
-                    }
-                });
-
-                // Clear and re-render only if there are substantial changes (simple approach)
-                // A better approach for huge chats would be to only append, but for simplicity we clear on the full snapshot load.
+                // If there are changes, clear the window and re-render all for consistency
                 if (snapshot.docChanges().length > 0) {
-                     // Clear and re-render all for simplicity and consistency
+                     // Clear placeholder or old content
                     chatWindowEl.innerHTML = ''; 
                     snapshot.forEach((doc) => {
                         displayMessage(doc.data());
                     });
+                } else if (snapshot.empty) {
+                     // If snapshot is empty (e.g., chat was cleared), show placeholder
+                    chatWindowEl.innerHTML = '<p class="text-gray-500 text-center text-sm mt-10">Messages will appear here once connected.</p>';
                 }
                 
                 // Scroll to the bottom of the chat window
@@ -242,10 +302,11 @@
             const time = message.timestamp ? new Date(message.timestamp.seconds * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '...';
             
             // Use cached profile info if available
-            const profile = profilesCache[message.userId] || { name: message.userId, gender: '', age: '' };
+            const profile = profilesCache[message.userId] || { name: message.userId, gender: 'N/A', age: 'N/A' };
             const displayName = profile.name;
             const displayGender = profile.gender;
             const displayAge = profile.age;
+            // Only show metadata if it's not the default N/A
             const metadata = (displayGender && displayGender !== 'N/A') ? ` (${displayGender}, ${displayAge})` : '';
 
             return `
