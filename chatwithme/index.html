@@ -1,0 +1,570 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini Real-Time P2P Chat</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Load PeerJS for WebRTC -->
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        /* Custom styles for better aesthetics */
+        body { font-family: 'Inter', sans-serif; }
+        #chat-window {
+            height: 50vh;
+            overflow-y: auto;
+            scroll-behavior: smooth;
+        }
+        .message-bubble-user {
+            background-color: #2563eb; /* Blue-700 */
+            align-self: flex-end;
+            border-bottom-right-radius: 0;
+        }
+        .message-bubble-other {
+            background-color: #374151; /* Gray-700 */
+            align-self: flex-start;
+            border-bottom-left-radius: 0;
+        }
+        .video-container {
+            height: 30vh;
+            min-height: 200px;
+            background: #111827; /* Gray-900 */
+            border-radius: 0.75rem;
+            position: relative;
+        }
+        video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 0.75rem;
+        }
+        /* Style for the Peer ID input and list */
+        .peer-id-list {
+            max-height: 200px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-4 sm:p-8">
+
+    <!-- Profile Setup Screen (New Feature: Initially shown) -->
+    <div id="profile-setup" class="fixed inset-0 bg-gray-900 bg-opacity-95 flex items-center justify-center z-50">
+        <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md space-y-6 transform transition duration-500 scale-100">
+            <h2 class="text-3xl font-bold text-blue-400 text-center">Set Up Your Profile</h2>
+            <p class="text-gray-400 text-center">Your name, age, and gender will be visible to other users.</p>
+            
+            <input type="text" id="profile-name" placeholder="Name (e.g., Jane Doe)" required class="w-full p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm">
+            
+            <input type="number" id="profile-age" placeholder="Age (Must be > 12)" min="13" max="120" required class="w-full p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm">
+            
+            <select id="profile-gender" required class="w-full p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm appearance-none">
+                <option value="" disabled selected>Select Gender</option>
+                <option value="Male">Male</option>
+                <option value="Female">Female</option>
+                <option value="Other">Other</option>
+                <option value="Prefer Not To Say">Prefer Not To Say</option>
+            </select>
+            
+            <button onclick="saveProfile()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-md transform hover:scale-[1.01] active:scale-[0.99]">
+                Enter Chat
+            </button>
+            <p id="profile-error" class="text-red-400 text-center text-sm hidden"></p>
+        </div>
+    </div>
+    
+    <!-- Main App Content (Hidden until profile is set) -->
+    <div id="main-app-container" style="display:none;">
+        <div id="app" class="max-w-6xl mx-auto space-y-8">
+            <header class="text-center">
+                <h1 class="text-4xl font-extrabold text-blue-400">P2P Chat Bridge</h1>
+                <p id="user-status" class="text-sm mt-2 font-medium text-gray-400">
+                    Connecting...
+                </p>
+            </header>
+
+            <!-- Main Layout: Video Section (Top) and Chat/Controls (Bottom) -->
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                <!-- Video/Peer Controls Section (Col 1 & 2) -->
+                <div class="lg:col-span-2 space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <!-- Local Video -->
+                        <div class="video-container">
+                            <video id="local-video" muted autoplay playsinline class="rounded-xl"></video>
+                            <span class="absolute top-2 left-2 px-2 py-1 bg-gray-800 bg-opacity-70 text-xs rounded-lg">You</span>
+                        </div>
+                        <!-- Remote Video -->
+                        <div class="video-container">
+                            <video id="remote-video" autoplay playsinline class="rounded-xl"></video>
+                            <span class="absolute top-2 left-2 px-2 py-1 bg-gray-800 bg-opacity-70 text-xs rounded-lg">Peer</span>
+                        </div>
+                    </div>
+
+                    <!-- Peer Connection Status and Controls -->
+                    <div class="bg-gray-800 p-4 rounded-xl shadow-lg space-y-4">
+                        <h2 class="text-xl font-semibold text-white">Video Call Status</h2>
+                        <p id="vc-status" class="text-sm text-yellow-400">Disconnected.</p>
+
+                        <div id="connection-controls" class="space-y-3">
+                            <div class="flex flex-col sm:flex-row gap-3">
+                                <input type="text" id="peer-id-input" placeholder="Enter Peer ID to call" class="flex-grow p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                                <button onclick="startCall()" class="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-md transform hover:scale-[1.02] active:scale-[0.98]">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 inline-block mr-1" viewBox="0 0 20 20" fill="currentColor">
+                                        <path d="M2 3a1 1 0 011-1h2.153a1 1 0 01.986.836l.74 3.111a1 1 0 01-.29 1.077L7.43 9.2c.518.34.86.877 1.08 1.48.22.603.22 1.25.02 1.834L8.14 13a1 1 0 00.17 1.06l1.35 1.516a.999.999 0 001.39.066l2.18-1.928a1 1 0 011.08.01L17 15.153a1 1 0 01.836.986v2.153a1 1 0 01-1 1h-2.148A17.02 17.02 0 012.8 5.148V3z" />
+                                    </svg>
+                                    Call Peer
+                                </button>
+                            </div>
+                            <div class="flex gap-3 justify-center">
+                                <button id="mute-btn" onclick="toggleMute()" class="w-1/3 bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">Mute</button>
+                                <button id="end-call-btn" onclick="endCall()" class="w-1/3 bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200">End Call</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Text Chat Section (Col 3) -->
+                <div class="lg:col-span-1 bg-gray-800 p-4 rounded-xl shadow-lg flex flex-col h-[70vh] min-h-[500px]">
+                    <h2 class="text-xl font-semibold mb-3 text-white">Text Chat</h2>
+                    
+                    <!-- Chat Window -->
+                    <div id="chat-window" class="flex-grow p-3 space-y-4 bg-gray-900 rounded-lg border border-gray-700 mb-4">
+                        <!-- Messages will be injected here -->
+                    </div>
+
+                    <!-- Message Input -->
+                    <div class="flex gap-2">
+                        <input type="text" id="message-input" placeholder="Type a message..." class="flex-grow p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm">
+                        <button onclick="sendMessage()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold p-3 rounded-lg transition duration-200 shadow-md">
+                            Send
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Available Peers Section -->
+            <div class="bg-gray-800 p-4 rounded-xl shadow-lg">
+                <h2 class="text-xl font-semibold mb-3 text-white">Available Peers (Call one of these IDs!)</h2>
+                <p class="text-sm text-gray-400 mb-3">Click an ID to copy it to the call input field.</p>
+                <div id="available-peers" class="peer-id-list bg-gray-900 p-3 rounded-lg border border-gray-700 space-y-2">
+                    <!-- Peer IDs will be injected here -->
+                    <p class="text-gray-500">Loading active users...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDKs -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, onSnapshot, query, orderBy, serverTimestamp, setDoc, doc, getDoc, deleteDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- GLOBAL SETUP ---
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let app, db, auth, userId = null;
+        let isAuthReady = false;
+        let userProfile = null; // Store the current user's profile
+        let profilesCache = {}; // Cache for all user profiles (userId -> {name, age, gender})
+        
+        // WebRTC/PeerJS Globals
+        let peer = null;
+        let localStream = null;
+        let currentCall = null;
+
+        // Document elements
+        const profileSetupEl = document.getElementById('profile-setup');
+        const mainAppContainerEl = document.getElementById('main-app-container');
+        const userStatusEl = document.getElementById('user-status');
+        const chatWindowEl = document.getElementById('chat-window');
+        const messageInputEl = document.getElementById('message-input');
+        const localVideoEl = document.getElementById('local-video');
+        const remoteVideoEl = document.getElementById('remote-video');
+        const vcStatusEl = document.getElementById('vc-status');
+        const availablePeersEl = document.getElementById('available-peers');
+        const peerIdInputEl = document.getElementById('peer-id-input');
+
+        // Profile Inputs
+        const profileNameEl = document.getElementById('profile-name');
+        const profileAgeEl = document.getElementById('profile-age');
+        const profileGenderEl = document.getElementById('profile-gender');
+        const profileErrorEl = document.getElementById('profile-error');
+
+        // Firestore paths
+        const PUBLIC_CHAT_PATH = `artifacts/${appId}/public/data/chats`;
+        const PEER_STATUS_PATH = `artifacts/${appId}/public/data/peers`;
+        const PUBLIC_PROFILES_PATH = `artifacts/${appId}/public/data/profiles`; // New path for profiles
+
+        // --- FIREBASE INITIALIZATION & AUTH ---
+
+        async function initializeFirebase() {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase configuration is missing.");
+                    return;
+                }
+                
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                
+                await new Promise((resolve) => {
+                    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+                        unsubscribe(); // Stop listening after the first change
+                        if (user) {
+                            userId = user.uid;
+                        } else {
+                            if (initialAuthToken) {
+                                await signInWithCustomToken(auth, initialAuthToken);
+                                userId = auth.currentUser.uid;
+                            } else {
+                                const anonymousUser = await signInAnonymously(auth);
+                                userId = anonymousUser.user.uid;
+                            }
+                        }
+                        isAuthReady = true;
+                        
+                        // Check if profile exists before proceeding to the main app
+                        await checkAndLoadProfile();
+                        
+                        resolve();
+                    });
+                });
+            } catch (error) {
+                console.error("Firebase/Auth initialization failed:", error);
+                userStatusEl.textContent = "Initialization Failed. Check Console.";
+            }
+        }
+
+        async function checkAndLoadProfile() {
+            if (!db || !userId) return;
+
+            const profileDocRef = doc(db, PUBLIC_PROFILES_PATH, userId);
+            const profileSnap = await getDoc(profileDocRef);
+
+            if (profileSnap.exists()) {
+                // Profile exists, load it and proceed to main app
+                userProfile = profileSnap.data();
+                enterMainApp();
+            } else {
+                // Profile does not exist, show setup screen
+                profileSetupEl.style.display = 'flex';
+                mainAppContainerEl.style.display = 'none';
+            }
+        }
+        
+        // --- PROFILE FUNCTIONS ---
+
+        window.saveProfile = async function() {
+            const name = profileNameEl.value.trim();
+            const age = parseInt(profileAgeEl.value, 10);
+            const gender = profileGenderEl.value;
+
+            // Simple validation
+            if (!name || name.length < 2 || !age || age < 13 || !gender) {
+                profileErrorEl.textContent = "Please enter a valid name (min 2 chars), an age of 13 or older, and select a gender.";
+                profileErrorEl.style.display = 'block';
+                return;
+            }
+
+            profileErrorEl.style.display = 'none';
+
+            try {
+                const newProfile = { name, age, gender, userId, lastUpdate: serverTimestamp() };
+                await setDoc(doc(db, PUBLIC_PROFILES_PATH, userId), newProfile);
+                userProfile = newProfile;
+                enterMainApp();
+            } catch (error) {
+                console.error("Error saving profile:", error);
+                profileErrorEl.textContent = "Failed to save profile. Please try again.";
+                profileErrorEl.style.display = 'block';
+            }
+        }
+        
+        function enterMainApp() {
+            // Hide setup, show main app
+            profileSetupEl.style.display = 'none';
+            mainAppContainerEl.style.display = 'block';
+            
+            // Update status display
+            userStatusEl.innerHTML = `<span class="text-white">User:</span> <span class="text-blue-300 font-bold">${userProfile.name}</span> (<span class="text-xs">${userProfile.gender}, ${userProfile.age}</span>) | <span class="text-white">Peer ID:</span> <span id="peer-id-display" class="text-yellow-300 font-mono text-xs">Loading...</span>`;
+
+            // Start main app features
+            setupProfilesCacheListener();
+            setupPeerJS();
+            setupPeerStatusListener();
+            setupTextChatListener();
+        }
+
+        // --- GLOBAL PROFILES CACHE ---
+
+        function setupProfilesCacheListener() {
+            if (!db) return;
+
+            // Listen to all profiles to populate the cache for chat display
+            const q = query(collection(db, PUBLIC_PROFILES_PATH));
+
+            onSnapshot(q, (snapshot) => {
+                snapshot.forEach((doc) => {
+                    const profile = doc.data();
+                    profilesCache[profile.userId] = profile;
+                });
+                console.log("Profiles cache updated.");
+            }, (error) => {
+                console.error("Error listening to profiles:", error);
+            });
+        }
+
+
+        // --- TEXT CHAT FUNCTIONS ---
+
+        function setupTextChatListener() {
+            if (!db) return;
+
+            // NOTE: orderBy is still used here, but for production, complex queries may require indexes.
+            const q = query(collection(db, PUBLIC_CHAT_PATH), orderBy('timestamp', 'asc'));
+
+            onSnapshot(q, (snapshot) => {
+                chatWindowEl.innerHTML = ''; // Clear previous messages
+                snapshot.forEach((doc) => {
+                    const message = doc.data();
+                    displayMessage(message);
+                });
+                // Scroll to the bottom of the chat window
+                chatWindowEl.scrollTop = chatWindowEl.scrollHeight;
+            }, (error) => {
+                console.error("Error listening to chat messages:", error);
+            });
+        }
+
+        window.sendMessage = async function() {
+            const text = messageInputEl.value.trim();
+            if (text === "" || !db || !userId) return;
+
+            try {
+                await addDoc(collection(db, PUBLIC_CHAT_PATH), {
+                    userId: userId,
+                    name: userProfile.name, // Include name directly in message for easier lookup
+                    text: text,
+                    timestamp: serverTimestamp(),
+                });
+                messageInputEl.value = '';
+            } catch (error) {
+                console.error("Error sending message:", error);
+            }
+        }
+
+        function displayMessage(message) {
+            const isUser = message.userId === userId;
+            const time = message.timestamp ? new Date(message.timestamp.seconds * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '...';
+            
+            // Use cached name if available, otherwise fall back to raw userId
+            const displayName = profilesCache[message.userId]?.name || message.userId;
+            const displayGender = profilesCache[message.userId]?.gender || '';
+            const displayAge = profilesCache[message.userId]?.age || '';
+            const metadata = displayGender ? ` (${displayGender}, ${displayAge})` : '';
+
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `flex ${isUser ? 'justify-end' : 'justify-start'}`;
+
+            const bubble = document.createElement('div');
+            bubble.className = `max-w-xs sm:max-w-md p-3 rounded-xl shadow-md text-sm break-words ${isUser ? 'message-bubble-user text-white' : 'message-bubble-other text-gray-200'}`;
+
+            bubble.innerHTML = `
+                <div class="font-bold ${isUser ? 'text-blue-200' : 'text-yellow-300'} text-xs mb-1 break-all">${isUser ? 'You' : displayName}${metadata}</div>
+                <p class="text-base">${message.text}</p>
+                <span class="text-[10px] opacity-70 mt-1 block text-right">${time}</span>
+            `;
+
+            messageDiv.appendChild(bubble);
+            chatWindowEl.appendChild(messageDiv);
+        }
+
+        // --- PEER STATUS MANAGEMENT (Simulating Random Match) ---
+
+        async function registerPeerStatus() {
+            if (!db || !peer || !peer.id || !userProfile) return;
+            try {
+                // Set the current user's Peer ID in the public collection, including profile info
+                await setDoc(doc(db, PEER_STATUS_PATH, userId), {
+                    peerId: peer.id,
+                    lastSeen: serverTimestamp(),
+                    userId: userId,
+                    name: userProfile.name, // Include name for easy display in peer list
+                    age: userProfile.age,
+                    gender: userProfile.gender,
+                });
+                console.log("Peer ID registered:", peer.id);
+
+                // Add a cleanup function to remove the ID when the user navigates away
+                window.addEventListener('beforeunload', async () => {
+                    await deleteDoc(doc(db, PEER_STATUS_PATH, userId));
+                });
+            } catch (error) {
+                console.error("Error registering peer status:", error);
+            }
+        }
+
+        function setupPeerStatusListener() {
+            if (!db) return;
+
+            const q = query(collection(db, PEER_STATUS_PATH), orderBy('lastSeen', 'desc'));
+
+            onSnapshot(q, (snapshot) => {
+                availablePeersEl.innerHTML = '';
+                let hasPeers = false;
+                snapshot.forEach((doc) => {
+                    const data = doc.data();
+                    // Don't show the current user's ID in the list
+                    if (data.userId !== userId) {
+                        hasPeers = true;
+                        const peerItem = document.createElement('button');
+                        peerItem.className = 'w-full text-left p-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition duration-150 flex justify-between items-center';
+                        
+                        // Display Name, Age, and Gender in the peer list
+                        peerItem.innerHTML = `
+                            <div>
+                                <span class="font-bold text-base text-white">${data.name}</span>
+                                <span class="text-sm text-gray-400">(${data.gender}, ${data.age})</span>
+                                <div class="font-mono text-xs text-yellow-300 break-all">ID: ${data.peerId}</div>
+                            </div>
+                            <span class="text-xs text-blue-400 font-bold py-1 px-2 rounded-full bg-gray-600">CALL</span>
+                        `;
+                        
+                        peerItem.onclick = () => {
+                            navigator.clipboard.writeText(data.peerId);
+                            peerIdInputEl.value = data.peerId;
+                            // Provide visual feedback instead of alert
+                            peerIdInputEl.placeholder = `${data.name}'s Peer ID copied! Click Call Peer.`;
+                            setTimeout(() => peerIdInputEl.placeholder = 'Enter Peer ID to call', 3000);
+                        };
+                        availablePeersEl.appendChild(peerItem);
+                    }
+                });
+
+                if (!hasPeers) {
+                    availablePeersEl.innerHTML = '<p class="text-gray-500">No other users currently available. Try refreshing or wait a moment.</p>';
+                }
+            }, (error) => {
+                console.error("Error listening to peer status:", error);
+            });
+        }
+
+        // --- PEERJS / WEBRTC FUNCTIONS (Unchanged logic) ---
+
+        function setupPeerJS() {
+            vcStatusEl.textContent = "Initializing PeerJS...";
+            peer = new Peer({});
+
+            peer.on('open', (id) => {
+                document.getElementById('peer-id-display').textContent = id;
+                vcStatusEl.textContent = `Peer ID Ready: ${id}. Waiting for a call...`;
+                registerPeerStatus();
+                setupMedia();
+            });
+
+            peer.on('call', (call) => {
+                vcStatusEl.textContent = `Incoming call from ${call.peer}! Answering...`;
+                currentCall = call;
+                call.answer(localStream);
+                setupRemoteStream(call);
+            });
+
+            peer.on('error', (err) => {
+                console.error("PeerJS Error:", err);
+                vcStatusEl.textContent = `Error: ${err.type}. See console for details.`;
+            });
+        }
+
+        async function setupMedia() {
+            try {
+                localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+                localVideoEl.srcObject = localStream;
+                localVideoEl.onloadedmetadata = () => localVideoEl.play();
+                vcStatusEl.textContent = "Media access granted. Ready to call!";
+            } catch (err) {
+                console.error("Failed to get local stream:", err);
+                vcStatusEl.textContent = "ERROR: Cannot access camera/mic. Grant permission to use VC.";
+            }
+        }
+
+        window.startCall = function() {
+            const remotePeerId = peerIdInputEl.value.trim();
+            if (!remotePeerId) {
+                vcStatusEl.textContent = "Please enter a Peer ID to call.";
+                return;
+            }
+            if (!localStream) {
+                vcStatusEl.textContent = "Waiting for camera/mic access...";
+                setupMedia();
+                return;
+            }
+
+            vcStatusEl.textContent = `Calling ${remotePeerId}...`;
+            
+            const call = peer.call(remotePeerId, localStream);
+            currentCall = call;
+
+            setupRemoteStream(call);
+
+            call.on('close', () => {
+                vcStatusEl.textContent = "Call ended by remote peer.";
+                remoteVideoEl.srcObject = null;
+                currentCall = null;
+            });
+
+            call.on('error', (err) => {
+                console.error("Call Error:", err);
+                vcStatusEl.textContent = `Call failed with ${remotePeerId}. Error: ${err.type}`;
+            });
+        }
+
+        function setupRemoteStream(call) {
+            call.on('stream', (remoteStream) => {
+                remoteVideoEl.srcObject = remoteStream;
+                remoteVideoEl.onloadedmetadata = () => remoteVideoEl.play();
+                vcStatusEl.textContent = `Connected to ${call.peer}!`;
+            });
+        }
+
+        window.toggleMute = function() {
+            if (localStream) {
+                const audioTracks = localStream.getAudioTracks();
+                if (audioTracks.length > 0) {
+                    const isMuted = audioTracks[0].enabled;
+                    audioTracks[0].enabled = !isMuted;
+                    document.getElementById('mute-btn').textContent = !isMuted ? 'Unmute' : 'Mute';
+                    document.getElementById('mute-btn').classList.toggle('bg-yellow-600', isMuted);
+                    document.getElementById('mute-btn').classList.toggle('bg-yellow-800', !isMuted);
+                }
+            }
+        }
+
+        window.endCall = function() {
+            if (currentCall) {
+                currentCall.close();
+                vcStatusEl.textContent = "Call ended.";
+                remoteVideoEl.srcObject = null;
+            } else {
+                vcStatusEl.textContent = "No active call to end.";
+            }
+            currentCall = null;
+        }
+
+        // --- START APPLICATION ---
+        initializeFirebase();
+
+        // Add event listener for Enter key in chat input
+        messageInputEl.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+    </script>
+</body>
+</html>
