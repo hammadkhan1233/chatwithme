@@ -48,33 +48,10 @@
 </head>
 <body class="bg-gray-900 text-gray-100 min-h-screen p-4 sm:p-8">
 
-    <!-- Profile Setup Screen (New Feature: Initially shown) -->
-    <div id="profile-setup" class="fixed inset-0 bg-gray-900 bg-opacity-95 flex items-center justify-center z-50">
-        <div class="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md space-y-6 transform transition duration-500 scale-100">
-            <h2 class="text-3xl font-bold text-blue-400 text-center">Set Up Your Profile</h2>
-            <p class="text-gray-400 text-center">Your name, age, and gender will be visible to other users.</p>
-            
-            <input type="text" id="profile-name" placeholder="Name (e.g., Jane Doe)" required class="w-full p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm">
-            
-            <input type="number" id="profile-age" placeholder="Age (Must be > 12)" min="13" max="120" required class="w-full p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm">
-            
-            <select id="profile-gender" required class="w-full p-3 rounded-lg bg-gray-700 border border-gray-600 focus:ring-blue-500 focus:border-blue-500 text-sm appearance-none">
-                <option value="" disabled selected>Select Gender</option>
-                <option value="Male">Male</option>
-                <option value="Female">Female</option>
-                <option value="Other">Other</option>
-                <option value="Prefer Not To Say">Prefer Not To Say</option>
-            </select>
-            
-            <button onclick="saveProfile()" class="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-200 shadow-md transform hover:scale-[1.01] active:scale-[0.99]">
-                Enter Chat
-            </button>
-            <p id="profile-error" class="text-red-400 text-center text-sm hidden"></p>
-        </div>
-    </div>
+    <!-- Profile Setup Screen (REMOVED - App starts directly) -->
     
-    <!-- Main App Content (Hidden until profile is set) -->
-    <div id="main-app-container" style="display:none;">
+    <!-- Main App Content (Always visible now) -->
+    <div id="main-app-container">
         <div id="app" class="max-w-6xl mx-auto space-y-8">
             <header class="text-center">
                 <h1 class="text-4xl font-extrabold text-blue-400">P2P Chat Bridge</h1>
@@ -176,8 +153,7 @@
         let localStream = null;
         let currentCall = null;
 
-        // Document elements
-        const profileSetupEl = document.getElementById('profile-setup');
+        // Document elements (removed profile setup elements)
         const mainAppContainerEl = document.getElementById('main-app-container');
         const userStatusEl = document.getElementById('user-status');
         const chatWindowEl = document.getElementById('chat-window');
@@ -188,16 +164,10 @@
         const availablePeersEl = document.getElementById('available-peers');
         const peerIdInputEl = document.getElementById('peer-id-input');
 
-        // Profile Inputs
-        const profileNameEl = document.getElementById('profile-name');
-        const profileAgeEl = document.getElementById('profile-age');
-        const profileGenderEl = document.getElementById('profile-gender');
-        const profileErrorEl = document.getElementById('profile-error');
-
         // Firestore paths
         const PUBLIC_CHAT_PATH = `artifacts/${appId}/public/data/chats`;
         const PEER_STATUS_PATH = `artifacts/${appId}/public/data/peers`;
-        const PUBLIC_PROFILES_PATH = `artifacts/${appId}/public/data/profiles`; // New path for profiles
+        const PUBLIC_PROFILES_PATH = `artifacts/${appId}/public/data/profiles`; // Path for profiles
 
         // --- FIREBASE INITIALIZATION & AUTH ---
 
@@ -228,7 +198,7 @@
                         }
                         isAuthReady = true;
                         
-                        // Check if profile exists before proceeding to the main app
+                        // Load or create a default profile and immediately enter the app
                         await checkAndLoadProfile();
                         
                         resolve();
@@ -247,50 +217,31 @@
             const profileSnap = await getDoc(profileDocRef);
 
             if (profileSnap.exists()) {
-                // Profile exists, load it and proceed to main app
+                // Profile exists, load it
                 userProfile = profileSnap.data();
-                enterMainApp();
             } else {
-                // Profile does not exist, show setup screen
-                profileSetupEl.style.display = 'flex';
-                mainAppContainerEl.style.display = 'none';
+                // Profile does not exist, create and save a default profile
+                const defaultProfile = {
+                    name: `Guest-${userId.substring(0, 8)}`,
+                    age: 'N/A',
+                    gender: 'N/A',
+                    userId: userId,
+                    lastUpdate: serverTimestamp(),
+                };
+                await setDoc(profileDocRef, defaultProfile);
+                userProfile = defaultProfile;
             }
+            
+            // Immediately start the main app after profile is set (default or saved)
+            enterMainApp();
         }
         
-        // --- PROFILE FUNCTIONS ---
-
-        window.saveProfile = async function() {
-            const name = profileNameEl.value.trim();
-            const age = parseInt(profileAgeEl.value, 10);
-            const gender = profileGenderEl.value;
-
-            // Simple validation
-            if (!name || name.length < 2 || !age || age < 13 || !gender) {
-                profileErrorEl.textContent = "Please enter a valid name (min 2 chars), an age of 13 or older, and select a gender.";
-                profileErrorEl.style.display = 'block';
-                return;
-            }
-
-            profileErrorEl.style.display = 'none';
-
-            try {
-                const newProfile = { name, age, gender, userId, lastUpdate: serverTimestamp() };
-                await setDoc(doc(db, PUBLIC_PROFILES_PATH, userId), newProfile);
-                userProfile = newProfile;
-                enterMainApp();
-            } catch (error) {
-                console.error("Error saving profile:", error);
-                profileErrorEl.textContent = "Failed to save profile. Please try again.";
-                profileErrorEl.style.display = 'block';
-            }
-        }
+        // --- PROFILE FUNCTIONS (Removed saveProfile) ---
         
         function enterMainApp() {
-            // Hide setup, show main app
-            profileSetupEl.style.display = 'none';
-            mainAppContainerEl.style.display = 'block';
+            // Main app container is always visible in HTML now, but this function initializes services
             
-            // Update status display
+            // Update status display using the loaded or default profile
             userStatusEl.innerHTML = `<span class="text-white">User:</span> <span class="text-blue-300 font-bold">${userProfile.name}</span> (<span class="text-xs">${userProfile.gender}, ${userProfile.age}</span>) | <span class="text-white">Peer ID:</span> <span id="peer-id-display" class="text-yellow-300 font-mono text-xs">Loading...</span>`;
 
             // Start main app features
@@ -300,12 +251,11 @@
             setupTextChatListener();
         }
 
-        // --- GLOBAL PROFILES CACHE ---
+        // --- GLOBAL PROFILES CACHE (Kept for displaying other users' details) ---
 
         function setupProfilesCacheListener() {
             if (!db) return;
 
-            // Listen to all profiles to populate the cache for chat display
             const q = query(collection(db, PUBLIC_PROFILES_PATH));
 
             onSnapshot(q, (snapshot) => {
@@ -325,7 +275,6 @@
         function setupTextChatListener() {
             if (!db) return;
 
-            // NOTE: orderBy is still used here, but for production, complex queries may require indexes.
             const q = query(collection(db, PUBLIC_CHAT_PATH), orderBy('timestamp', 'asc'));
 
             onSnapshot(q, (snapshot) => {
@@ -348,7 +297,7 @@
             try {
                 await addDoc(collection(db, PUBLIC_CHAT_PATH), {
                     userId: userId,
-                    name: userProfile.name, // Include name directly in message for easier lookup
+                    name: userProfile.name, // Use the userProfile name (default or saved)
                     text: text,
                     timestamp: serverTimestamp(),
                 });
@@ -362,11 +311,12 @@
             const isUser = message.userId === userId;
             const time = message.timestamp ? new Date(message.timestamp.seconds * 1000).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }) : '...';
             
-            // Use cached name if available, otherwise fall back to raw userId
-            const displayName = profilesCache[message.userId]?.name || message.userId;
-            const displayGender = profilesCache[message.userId]?.gender || '';
-            const displayAge = profilesCache[message.userId]?.age || '';
-            const metadata = displayGender ? ` (${displayGender}, ${displayAge})` : '';
+            // Use cached profile info if available
+            const profile = profilesCache[message.userId] || { name: message.userId, gender: '', age: '' };
+            const displayName = profile.name;
+            const displayGender = profile.gender;
+            const displayAge = profile.age;
+            const metadata = (displayGender && displayGender !== 'N/A') ? ` (${displayGender}, ${displayAge})` : '';
 
             const messageDiv = document.createElement('div');
             messageDiv.className = `flex ${isUser ? 'justify-end' : 'justify-start'}`;
@@ -394,7 +344,7 @@
                     peerId: peer.id,
                     lastSeen: serverTimestamp(),
                     userId: userId,
-                    name: userProfile.name, // Include name for easy display in peer list
+                    name: userProfile.name, 
                     age: userProfile.age,
                     gender: userProfile.gender,
                 });
@@ -426,10 +376,12 @@
                         peerItem.className = 'w-full text-left p-2 rounded-lg bg-gray-700 hover:bg-gray-600 transition duration-150 flex justify-between items-center';
                         
                         // Display Name, Age, and Gender in the peer list
+                        const displayAgeGender = (data.gender && data.gender !== 'N/A') ? `(${data.gender}, ${data.age})` : '';
+
                         peerItem.innerHTML = `
                             <div>
                                 <span class="font-bold text-base text-white">${data.name}</span>
-                                <span class="text-sm text-gray-400">(${data.gender}, ${data.age})</span>
+                                <span class="text-sm text-gray-400">${displayAgeGender}</span>
                                 <div class="font-mono text-xs text-yellow-300 break-all">ID: ${data.peerId}</div>
                             </div>
                             <span class="text-xs text-blue-400 font-bold py-1 px-2 rounded-full bg-gray-600">CALL</span>
