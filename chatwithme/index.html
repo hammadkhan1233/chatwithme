@@ -57,7 +57,7 @@
                 </div>
             </div>
 
-            <!-- NEW: Online Users Section -->
+            <!-- Online Users Section -->
             <div class="bg-gray-800 p-4 rounded-xl shadow-lg">
                 <h2 class="text-xl font-semibold mb-3 text-white">Online Users</h2>
                 <div id="online-users-list" class="max-h-32 overflow-y-auto bg-gray-900 p-3 rounded-lg border border-gray-700 space-y-2">
@@ -75,7 +75,7 @@
         
         // --- GLOBAL SETUP ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const firebaseConfigString = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
 
         let app, db, auth, userId = null;
@@ -87,7 +87,7 @@
         const userStatusEl = document.getElementById('user-status');
         const chatWindowEl = document.getElementById('chat-window');
         const messageInputEl = document.getElementById('message-input');
-        const onlineUsersListEl = document.getElementById('online-users-list'); // NEW
+        const onlineUsersListEl = document.getElementById('online-users-list');
 
         // Firestore paths
         const PUBLIC_CHAT_PATH = `artifacts/${appId}/public/data/chats`;
@@ -96,12 +96,22 @@
         // --- FIREBASE INITIALIZATION & AUTH ---
 
         async function initializeFirebase() {
+            let firebaseConfig;
+            
+            // 1. Check for Configuration
             try {
+                firebaseConfig = JSON.parse(firebaseConfigString);
                 if (Object.keys(firebaseConfig).length === 0) {
-                    console.error("Firebase configuration is missing.");
-                    return;
+                    throw new Error("Empty configuration object.");
                 }
-                
+            } catch (e) {
+                console.error("[FIREBASE ERROR] Configuration parsing failed or is empty.", e);
+                userStatusEl.textContent = "FATAL: Firebase Configuration Missing.";
+                return;
+            }
+
+            try {
+                console.log("Attempting Firebase initialization...");
                 app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -113,22 +123,26 @@
                             userId = user.uid;
                         } else {
                             if (initialAuthToken) {
+                                console.log("Signing in with custom token.");
                                 await signInWithCustomToken(auth, initialAuthToken);
                                 userId = auth.currentUser.uid;
                             } else {
+                                console.log("Signing in anonymously.");
                                 const anonymousUser = await signInAnonymously(auth);
                                 userId = anonymousUser.user.uid;
                             }
                         }
                         isAuthReady = true;
                         
+                        // Proceed to app logic after successful auth
                         await checkAndLoadProfile();
                         
                         resolve();
                     });
                 });
+                console.log(`[FIREBASE SUCCESS] Auth complete. User ID: ${userId}`);
             } catch (error) {
-                console.error("Firebase/Auth initialization failed:", error);
+                console.error("[FIREBASE ERROR] Initialization or Authentication failed:", error);
                 userStatusEl.textContent = "Initialization Failed. Check Console.";
             }
         }
@@ -172,32 +186,35 @@
             displaySystemMessage(`Welcome! You are connected as ${userProfile.name}. Start chatting now.`);
 
             // Start main app features
-            registerUserPresence(); // NEW: Register user as active
+            registerUserPresence(); // Register user as active
             setupProfilesCacheListener();
             setupTextChatListener();
-            setupOnlineUsersListener(); // NEW: Listen for other active users
+            setupOnlineUsersListener(); // Listen for other active users
         }
         
-        // --- USER PRESENCE & ONLINE LIST FUNCTIONS (NEW) ---
+        // --- USER PRESENCE & ONLINE LIST FUNCTIONS ---
 
         async function registerUserPresence() {
             if (!db || !userId || !userProfile) return;
             const profileDocRef = doc(db, PUBLIC_PROFILES_PATH, userId);
             
             // Mark user as explicitly online and update last active time
-            await setDoc(profileDocRef, { 
-                isOnline: true, 
-                lastActive: serverTimestamp() 
-            }, { merge: true });
-
-            // Cleanup function: mark user as offline when they leave the page
-            window.addEventListener('beforeunload', async () => {
-                // Use a direct update here as it's a best-effort cleanup
+            // This is done on a best-effort basis, Firestore rules may prevent non-authenticated users from writing
+            try {
                 await setDoc(profileDocRef, { 
-                    isOnline: false, 
+                    isOnline: true, 
                     lastActive: serverTimestamp() 
                 }, { merge: true });
-            });
+
+                window.addEventListener('beforeunload', async () => {
+                    await setDoc(profileDocRef, { 
+                        isOnline: false, 
+                        lastActive: serverTimestamp() 
+                    }, { merge: true });
+                });
+            } catch(e) {
+                console.warn("[FIREBASE WARNING] Could not register user presence. User might not appear in the Online List if security rules are strict.", e);
+            }
         }
 
         function setupOnlineUsersListener() {
@@ -214,13 +231,11 @@
                 snapshot.forEach((doc) => {
                     const profile = doc.data();
                     
-                    // Check if they are currently active (either marked isOnline=true 
-                    // or if their lastActive time was less than 30 seconds ago)
+                    // Check if they are currently active
                     let isActive = false;
                     if (profile.isOnline === true) {
                         isActive = true;
                     } else if (profile.lastActive && profile.lastActive.seconds * 1000 > thirtySecondsAgo) {
-                         // Fallback check if the cleanup failed but they were very recently active
                         isActive = true;
                     }
 
@@ -242,7 +257,7 @@
                     onlineUsersListEl.innerHTML = '<p class="text-gray-500">You are the only one here.</p>';
                 }
             }, (error) => {
-                console.error("Error listening to online users:", error);
+                console.error("[FIREBASE ERROR] Error listening to online users:", error);
             });
         }
         
@@ -260,7 +275,7 @@
                 });
                 console.log("Profiles cache updated.");
             }, (error) => {
-                console.error("Error listening to profiles:", error);
+                console.error("[FIREBASE ERROR] Error listening to profiles:", error);
             });
         }
 
@@ -297,7 +312,7 @@
                 // Scroll to the bottom of the chat window
                 chatWindowEl.scrollTop = chatWindowEl.scrollHeight;
             }, (error) => {
-                console.error("Error listening to chat messages:", error);
+                console.error("[FIREBASE ERROR] Error listening to chat messages:", error);
             });
         }
 
@@ -314,7 +329,9 @@
                 });
                 messageInputEl.value = '';
             } catch (error) {
-                console.error("Error sending message:", error);
+                console.error("[FIREBASE ERROR] Error sending message:", error);
+                // Simple error message for the user in the console
+                displaySystemMessage("Could not send message. Check console for details.");
             }
         }
         
