@@ -156,8 +156,20 @@
             enterMainApp();
         }
         
+        // Function to display a system message (will not be stored in Firestore)
+        function displaySystemMessage(text) {
+            const systemDiv = document.createElement('div');
+            systemDiv.className = 'text-center my-4';
+            systemDiv.innerHTML = `<span class="text-xs font-medium text-yellow-400 bg-gray-700 px-3 py-1 rounded-full shadow-inner">${text}</span>`;
+            chatWindowEl.appendChild(systemDiv);
+            chatWindowEl.scrollTop = chatWindowEl.scrollHeight;
+        }
+
         function enterMainApp() {
             userStatusEl.innerHTML = `<span class="text-white">Logged in as:</span> <span class="text-blue-300 font-bold">${userProfile.name}</span>`;
+
+            // NEW: System message to confirm connection and identity
+            displaySystemMessage(`Welcome! You are connected as ${userProfile.name}. Start chatting now.`);
 
             // Start main app features
             registerUserPresence(); // NEW: Register user as active
@@ -261,16 +273,25 @@
             const q = query(collection(db, PUBLIC_CHAT_PATH), orderBy('timestamp', 'asc'));
 
             onSnapshot(q, (snapshot) => {
-                // If there are changes, clear the window and re-render all for consistency
-                if (snapshot.docChanges().length > 0) {
-                     // Clear placeholder or old content
-                    chatWindowEl.innerHTML = ''; 
-                    snapshot.forEach((doc) => {
-                        displayMessage(doc.data());
-                    });
-                } else if (snapshot.empty) {
-                     // If snapshot is empty (e.g., chat was cleared), show placeholder
-                    chatWindowEl.innerHTML = '<p class="text-gray-500 text-center text-sm mt-10">Messages will appear here once connected.</p>';
+                // Check if there are any messages from the database
+                const hasMessagesInDB = !snapshot.empty;
+
+                // Clear the chat window before re-rendering all messages
+                chatWindowEl.innerHTML = ''; 
+
+                // Re-render all messages from the snapshot
+                snapshot.forEach((doc) => {
+                    displayMessage(doc.data());
+                });
+
+                // Re-add the welcome message if the user is logged in (it gets cleared above)
+                if (userProfile) {
+                    displaySystemMessage(`Welcome! You are connected as ${userProfile.name}. Start chatting now.`);
+                }
+
+                // If the database is empty, show the original placeholder
+                if (!hasMessagesInDB && !userProfile) {
+                     chatWindowEl.innerHTML = '<p class="text-gray-500 text-center text-sm mt-10">Messages will appear here once connected.</p>';
                 }
                 
                 // Scroll to the bottom of the chat window
